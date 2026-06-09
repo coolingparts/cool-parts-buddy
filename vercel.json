@@ -1,0 +1,24 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": ".vercel/output",
+  "framework": null,
+  "build": {
+    "env": {
+      "NITRO_PRESET": "vercel"
+    }
+  },
+  "env": {
+    "SUPABASE_URL": "@supabase-url",
+    "SUPABASE_PUBLISHABLE_KEY": "@supabase-publishable-key",
+    "SUPABASE_PROJECT_ID": "@supabase-project-id",
+    "VITE_SUPABASE_URL": "@supabase-url",
+    "VITE_SUPABASE_PUBLISHABLE_KEY": "@supabase-publishable-key",
+    "VITE_SUPABASE_PROJECT_ID": "@supabase-project-id",
+    "SHOPIFY_STORE": "@shopify-store",
+    "SHOPIFY_TOKEN": "@shopify-token",
+    "SHOPIFY_CLIENT_ID": "@shopify-client-id",
+    "SHOPIFY_CLIENT_SECRET": "@shopify-client-secret",
+    "SHOPIFY_REDIRECT_URI": "@shopify-redirect-uri",
+    "SCRAPINGBEE_KEY": "@scrapingbee-key"
+  }
+}
