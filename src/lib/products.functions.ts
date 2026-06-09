@@ -308,6 +308,23 @@ function scrapeGeneric(html: string, source: string): ScrapedItem[] {
 
 // ─── Strategy: Sitemap (.xml.gz with categoryproductlisting) ─────────────────
 
+async function decompressGz(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: { "User-Agent": randomUA(), Accept: "application/gzip, */*" },
+  });
+  if (!res.ok) throw new Error(`Sitemap gz fetch failed: HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const { gunzipSync } = await import("node:zlib");
+  return gunzipSync(buf).toString("utf-8");
+}
+
+function slugToTitle(slug: string): string {
+  return slug
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+}
+
 async function scrapeSitemap(
   indexUrl: string,
 ): Promise<{ items: ScrapedItem[]; pagesVisited: number }> {
@@ -317,46 +334,45 @@ async function scrapeSitemap(
   const indexXml = await fetchHtml(indexUrl);
   pagesVisited++;
 
-  // 2. Find the <loc> containing "categoryproductlisting"
+  // 2. Collect ALL <loc> containing "models-com" (models-com-0.xml.gz, models-com-1.xml.gz, …)
   const locRe = /<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi;
-  let catalogLoc: string | null = null;
+  const modelLocs: string[] = [];
   let m: RegExpExecArray | null;
   while ((m = locRe.exec(indexXml))) {
-    if (m[1].includes("categoryproductlisting")) {
-      catalogLoc = m[1].trim();
-      break;
-    }
+    if (m[1].includes("models-com")) modelLocs.push(m[1].trim());
   }
 
-  if (!catalogLoc) return { items: [], pagesVisited };
+  if (modelLocs.length === 0) return { items: [], pagesVisited };
 
-  // 3. Fetch the .xml.gz and decompress with node:zlib
-  const gzRes = await fetch(catalogLoc, {
-    headers: { "User-Agent": randomUA(), Accept: "application/gzip, */*" },
-  });
-  if (!gzRes.ok) throw new Error(`Sitemap gz fetch failed: HTTP ${gzRes.status}`);
-  pagesVisited++;
-
-  const buf = Buffer.from(await gzRes.arrayBuffer());
-  const { gunzipSync } = await import("node:zlib");
-  const xml = gunzipSync(buf).toString("utf-8");
-
-  // 4. Extract all <loc> URLs, cap at 500
+  // 3. Fetch and decompress up to 3 files
   const items: ScrapedItem[] = [];
-  const itemLocRe = /<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi;
-  while ((m = itemLocRe.exec(xml)) && items.length < 500) {
-    const locUrl = m[1].trim();
+  const seen = new Set<string>();
 
-    // 5. Parse sku/title from the last path segment
-    const slug = locUrl.split("/").filter(Boolean).pop() ?? "";
-    if (!slug || slug.includes(".xml") || slug.includes(".gz")) continue;
+  for (const gzUrl of modelLocs.slice(0, 3)) {
+    let xml: string;
+    try {
+      xml = await decompressGz(gzUrl);
+    } catch { continue; }
+    pagesVisited++;
 
-    const title = slug
-      .replace(/[_-]+/g, " ")
-      .replace(/\b\w/g, (c) => c.toUpperCase())
-      .trim();
+    // 4. Extract <loc> URLs — individual part/model pages
+    const itemLocRe = /<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi;
+    while ((m = itemLocRe.exec(xml)) && items.length < 500) {
+      const locUrl = m[1].trim();
 
-    items.push({ sku: slug, title, price: 0, image: null, brand: null, source: locUrl });
+      // 5. Parse SKU: last path segment, strip query strings
+      const rawSlug = locUrl.split("?")[0].split("/").filter(Boolean).pop() ?? "";
+      if (!rawSlug || rawSlug.includes(".xml") || rawSlug.includes(".gz")) continue;
+      if (seen.has(rawSlug)) continue;
+      seen.add(rawSlug);
+
+      // 6. Title: slug → title case
+      const title = slugToTitle(rawSlug);
+      items.push({ sku: rawSlug, title, price: 0, image: null, brand: null, source: locUrl });
+    }
+
+    if (items.length >= 500) break;
+    await sleep(jitter(400));
   }
 
   return { items, pagesVisited };
