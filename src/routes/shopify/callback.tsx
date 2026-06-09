@@ -6,13 +6,17 @@ import { toast } from "sonner";
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 
 export const Route = createFileRoute("/shopify/callback")({
-  validateSearch: (s: Record<string, unknown>) => ({
-    code: String(s.code ?? ""),
-    hmac: String(s.hmac ?? ""),
-    shop: String(s.shop ?? ""),
-    state: String(s.state ?? ""),
-    timestamp: String(s.timestamp ?? ""),
-  }),
+  validateSearch: (s: Record<string, unknown>) => {
+    // Captura todos os params — Shopify inclui `host` e outros no HMAC
+    const { hmac, code, shop, ...rest } = s;
+    return {
+      code: String(code ?? ""),
+      hmac: String(hmac ?? ""),
+      shop: String(shop ?? ""),
+      // restante (state, timestamp, host, etc.) repassado como strings
+      rest: Object.fromEntries(Object.entries(rest).map(([k, v]) => [k, String(v ?? "")])),
+    };
+  },
   component: ShopifyCallback,
 });
 
@@ -30,7 +34,7 @@ function ShopifyCallback() {
       return;
     }
 
-    exchangeFn({ data: search })
+    exchangeFn({ data: { code: search.code, hmac: search.hmac, shop: search.shop, ...search.rest } })
       .then((result) => {
         if (result.success) {
           setStatus("success");

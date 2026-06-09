@@ -75,9 +75,7 @@ const exchangeInput = z.object({
   code: z.string().min(1),
   hmac: z.string().min(1),
   shop: z.string().min(1),
-  state: z.coerce.string(),
-  timestamp: z.coerce.string(),
-});
+}).catchall(z.coerce.string()); // captura host, state, timestamp e quaisquer outros params
 
 export const exchangeShopifyCode = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => exchangeInput.parse(d))
@@ -90,11 +88,9 @@ export const exchangeShopifyCode = createServerFn({ method: "POST" })
         return { success: false, error: "Shopify OAuth credentials not configured." };
       }
 
-      const valid = await verifyHmac(
-        clientSecret,
-        { code: data.code, shop: data.shop, state: data.state, timestamp: data.timestamp },
-        data.hmac,
-      );
+      // Passa TODOS os params recebidos (exceto hmac) para o HMAC — Shopify inclui `host` etc.
+      const { hmac, ...paramsForHmac } = data;
+      const valid = await verifyHmac(clientSecret, paramsForHmac as Record<string, string>, hmac);
       if (!valid) {
         return { success: false, error: "HMAC inválido — possível request forjado." };
       }
