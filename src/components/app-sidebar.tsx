@@ -1,8 +1,11 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { LayoutDashboard, Link2, Package, PlusCircle, Snowflake } from "lucide-react";
+import { useServerFn } from "@tanstack/react-start";
+import { LayoutDashboard, Link2, Package, PlusCircle, Snowflake, Store } from "lucide-react";
+import { getShopifyAuthUrl } from "@/lib/shopify.functions";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -11,6 +14,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
 
 const items = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -21,6 +25,16 @@ const items = [
 
 export function AppSidebar() {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
+  const getAuthUrlFn = useServerFn(getShopifyAuthUrl);
+
+  async function handleConnectShopify() {
+    try {
+      const { url } = await getAuthUrlFn();
+      window.location.href = url;
+    } catch (e) {
+      console.error(e);
+    }
+  }
 
   return (
     <Sidebar collapsible="icon">
@@ -54,6 +68,17 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarFooter className="border-t border-sidebar-border p-3">
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full justify-start gap-2"
+          onClick={handleConnectShopify}
+        >
+          <Store className="h-4 w-4" />
+          <span>Conectar Shopify</span>
+        </Button>
+      </SidebarFooter>
     </Sidebar>
   );
 }
