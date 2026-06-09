@@ -126,23 +126,51 @@ export const exchangeShopifyCode = createServerFn({ method: "POST" })
     },
   );
 
-// ── Publicar produto na Shopify (Admin GraphQL API) ──────────────────────────
+// ── Publicar produto na Shopify (Admin GraphQL API 2025-01) ──────────────────
+// Fluxo em 2 passos: productCreate (sem variants) → productVariantsBulkUpdate
+// (SKU fica em inventoryItem.sku, price é campo direto da variante)
 
 const PRODUCT_CREATE_MUTATION = `
-  mutation productCreate($input: ProductInput!) {
-    productCreate(input: $input) {
+  mutation productCreate($product: ProductCreateInput!) {
+    productCreate(product: $product) {
       product {
         id
-        title
         handle
+        variants(first: 1) {
+          edges { node { id } }
+        }
       }
-      userErrors {
-        field
-        message
-      }
+      userErrors { field message }
     }
   }
 `;
+
+const VARIANT_UPDATE_MUTATION = `
+  mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+      productVariants { id price sku }
+      userErrors { field message }
+    }
+  }
+`;
+
+async function shopifyGraphQL<T>(
+  store: string,
+  token: string,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<{ data?: T; errors?: { message: string }[] }> {
+  const res = await fetch(`https://${store}/admin/api/2025-01/graphql.json`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`Shopify GraphQL HTTP ${res.status}: ${text}`);
+  }
+  return res.json() as Promise<{ data?: T; errors?: { message: string }[] }>;
+}
 
 const publishInput = z.object({
   title: z.string().min(1),
@@ -162,7 +190,6 @@ export const publishToShopify = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => publishInput.parse(d))
   .handler(async ({ data }): Promise<PublishResult> => {
     const store = process.env.SHOPIFY_STORE;
-    // SHOPIFY_TOKEN (atkn_) funciona com GraphQL Admin API
     const token = process.env.SHOPIFY_TOKEN ?? (await getStoredToken());
 
     if (!store) return { success: false, error: "SHOPIFY_STORE não configurado." };
@@ -173,55 +200,64 @@ export const publishToShopify = createServerFn({ method: "POST" })
       };
     }
 
-    const variables: Record<string, unknown> = {
-      input: {
-        title: data.title,
-        status: "ACTIVE",
-        variants: [{ price: data.price.toFixed(2), sku: data.sku }],
-        ...(data.description ? { descriptionHtml: data.description } : {}),
-        ...(data.imageUrl ? { images: [{ src: data.imageUrl }] } : {}),
-      },
-    };
-
-    const res = await fetch(`https://${store}/admin/api/2025-01/graphql.json`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": token,
-      },
-      body: JSON.stringify({ query: PRODUCT_CREATE_MUTATION, variables }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      return { success: false, error: `Shopify GraphQL error ${res.status}: ${text}` };
-    }
-
-    type GqlResponse = {
-      data?: {
-        productCreate?: {
-          product?: { id: string; title: string; handle: string };
-          userErrors?: { field: string[]; message: string }[];
-        };
+    // Passo 1: cria o produto (sem variants)
+    type CreateData = {
+      productCreate?: {
+        product?: { id: string; handle: string; variants: { edges: { node: { id: string } }[] } };
+        userErrors?: { field: string[]; message: string }[];
       };
-      errors?: { message: string }[];
     };
 
-    const json = (await res.json()) as GqlResponse;
-
-    if (json.errors?.length) {
-      return { success: false, error: json.errors.map((e) => e.message).join(", ") };
+    let createResult: { data?: CreateData; errors?: { message: string }[] };
+    try {
+      createResult = await shopifyGraphQL<CreateData>(store, token, PRODUCT_CREATE_MUTATION, {
+        product: {
+          title: data.title,
+          status: "ACTIVE",
+          ...(data.description ? { descriptionHtml: data.description } : {}),
+        },
+      });
+    } catch (e) {
+      return { success: false, error: (e as Error).message };
     }
 
-    const userErrors = json.data?.productCreate?.userErrors ?? [];
-    if (userErrors.length) {
-      return { success: false, error: userErrors.map((e) => e.message).join(", ") };
+    if (createResult.errors?.length) {
+      return { success: false, error: createResult.errors.map((e) => e.message).join(", ") };
     }
 
-    const product = json.data?.productCreate?.product;
-    if (!product) return { success: false, error: "Resposta inesperada da Shopify." };
+    const createErrors = createResult.data?.productCreate?.userErrors ?? [];
+    if (createErrors.length) {
+      return { success: false, error: createErrors.map((e) => e.message).join(", ") };
+    }
 
-    // GID format: "gid://shopify/Product/12345678" → extrair ID numérico
+    const product = createResult.data?.productCreate?.product;
+    if (!product) return { success: false, error: "Resposta inesperada da Shopify (productCreate)." };
+
+    const variantId = product.variants.edges[0]?.node?.id;
+    if (!variantId) return { success: false, error: "Variante padrão não encontrada." };
+
+    // Passo 2: atualiza variante padrão com preço e SKU
+    type UpdateData = {
+      productVariantsBulkUpdate?: {
+        productVariants?: { id: string; price: string; sku: string }[];
+        userErrors?: { field: string[]; message: string }[];
+      };
+    };
+
+    try {
+      const updateResult = await shopifyGraphQL<UpdateData>(store, token, VARIANT_UPDATE_MUTATION, {
+        productId: product.id,
+        variants: [{ id: variantId, price: data.price.toFixed(2), inventoryItem: { sku: data.sku } }],
+      });
+
+      const updateErrors = updateResult.data?.productVariantsBulkUpdate?.userErrors ?? [];
+      if (updateErrors.length) {
+        return { success: false, error: `Produto criado mas variante falhou: ${updateErrors.map((e) => e.message).join(", ")}` };
+      }
+    } catch (e) {
+      return { success: false, error: `Produto criado mas variante falhou: ${(e as Error).message}` };
+    }
+
     const numericId = Number(product.id.split("/").pop());
 
     return {
