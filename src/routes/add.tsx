@@ -17,7 +17,7 @@ function AddSku() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [form, setForm] = useState({
-    sku: "", title: "", ebay_price: "", image_url: "",
+    sku: "", title: "", ebay_price: "", image_url: "", description: "",
   });
 
   const create = useMutation({
@@ -26,6 +26,7 @@ function AddSku() {
       const { error } = await supabase.from("products").insert({
         sku: form.sku.trim(),
         title: form.title.trim(),
+        description: form.description.trim() || null,
         ebay_price: ebay,
         our_price: Number((ebay * 2).toFixed(2)),
         image_url: form.image_url.trim() || null,
