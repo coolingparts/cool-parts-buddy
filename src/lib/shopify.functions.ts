@@ -75,8 +75,8 @@ const exchangeInput = z.object({
   code: z.string().min(1),
   hmac: z.string().min(1),
   shop: z.string().min(1),
-  state: z.string(),
-  timestamp: z.string(),
+  state: z.coerce.string(),
+  timestamp: z.coerce.string(),
 });
 
 export const exchangeShopifyCode = createServerFn({ method: "POST" })

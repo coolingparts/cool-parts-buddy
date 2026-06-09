@@ -7,11 +7,11 @@ import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 
 export const Route = createFileRoute("/shopify/callback")({
   validateSearch: (s: Record<string, unknown>) => ({
-    code: (s.code as string) ?? "",
-    hmac: (s.hmac as string) ?? "",
-    shop: (s.shop as string) ?? "",
-    state: (s.state as string) ?? "",
-    timestamp: (s.timestamp as string) ?? "",
+    code: String(s.code ?? ""),
+    hmac: String(s.hmac ?? ""),
+    shop: String(s.shop ?? ""),
+    state: String(s.state ?? ""),
+    timestamp: String(s.timestamp ?? ""),
   }),
   component: ShopifyCallback,
 });
