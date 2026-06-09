@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { publishToShopify } from "@/lib/shopify.functions";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { CheckCircle2, Rocket, Trash2, Pencil } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2, Rocket, Trash2, Pencil } from "lucide-react";
 
 export const Route = createFileRoute("/products")({
   head: () => ({ meta: [{ title: "Products · Cooling Parts Supply" }] }),
@@ -42,6 +43,7 @@ function ProductsPage() {
   const qc = useQueryClient();
   const [editProduct, setEditProduct] = useState<Product | null>(null);
   const [editDesc, setEditDesc] = useState("");
+  const [publishing, setPublishing] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["products"],
@@ -92,6 +94,52 @@ function ProductsPage() {
       qc.invalidateQueries({ queryKey: ["product-stats"] });
     },
   });
+
+  async function handlePublishToShopify(p: Product) {
+    setPublishing(p.id);
+    try {
+      const result = await publishToShopify({
+        data: {
+          title: p.title,
+          sku: p.sku,
+          price: Number(p.our_price),
+          imageUrl: p.image_url ?? undefined,
+          description: p.description ?? undefined,
+        },
+      });
+
+      if (!result.success) {
+        toast.error(`Shopify error: ${result.error}`);
+        return;
+      }
+
+      const { error } = await supabase
+        .from("products")
+        .update({ status: "published", shopify_id: String(result.productId) })
+        .eq("id", p.id);
+
+      if (error) {
+        toast.error(`Published on Shopify but failed to save ID: ${error.message}`);
+      } else {
+        toast.success(
+          <span>
+            Published!{" "}
+            <a href={result.productUrl} target="_blank" rel="noopener noreferrer" className="underline font-medium">
+              View on Shopify
+            </a>
+          </span>,
+          { duration: 6000 },
+        );
+      }
+
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["product-stats"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setPublishing(null);
+    }
+  }
 
   const openEdit = (p: Product) => {
     setEditProduct(p);
@@ -162,9 +210,31 @@ function ProductsPage() {
                           </Button>
                         )}
                         {p.status !== "published" && (
-                          <Button size="sm"
-                            onClick={() => updateStatus.mutate({ id: p.id, status: "published" })}>
-                            <Rocket className="mr-1 h-3.5 w-3.5" /> Publish
+                          <Button
+                            size="sm"
+                            disabled={publishing === p.id}
+                            onClick={() => handlePublishToShopify(p)}
+                          >
+                            {publishing === p.id ? (
+                              <><Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> Publishing…</>
+                            ) : (
+                              <><Rocket className="mr-1 h-3.5 w-3.5" /> Publish</>
+                            )}
+                          </Button>
+                        )}
+                        {p.status === "published" && p.shopify_id && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            asChild
+                          >
+                            <a
+                              href={`https://admin.shopify.com/store/coolingpartssupply/products/${p.shopify_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <ExternalLink className="mr-1 h-3.5 w-3.5" /> Shopify
+                            </a>
                           </Button>
                         )}
                         <Button size="sm" variant="ghost" onClick={() => remove.mutate(p.id)}>
