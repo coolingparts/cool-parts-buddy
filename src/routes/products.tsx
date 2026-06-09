@@ -2,7 +2,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { publishToShopify } from "@/lib/shopify.functions";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -98,15 +97,21 @@ function ProductsPage() {
   async function handlePublishToShopify(p: Product) {
     setPublishing(p.id);
     try {
-      const result = await publishToShopify({
-        data: {
+      const res = await fetch("/api/shopify/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           title: p.title,
           sku: p.sku,
           price: Number(p.our_price),
           imageUrl: p.image_url ?? undefined,
           description: p.description ?? undefined,
-        },
+        }),
       });
+
+      const result = await res.json() as
+        | { success: true; productId: number; productUrl: string }
+        | { success: false; error: string };
 
       if (!result.success) {
         toast.error(`Shopify error: ${result.error}`);
