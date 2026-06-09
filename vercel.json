@@ -1,12 +1,6 @@
 {
   "buildCommand": "npm run build",
-  "outputDirectory": ".vercel/output",
   "framework": null,
-  "build": {
-    "env": {
-      "NITRO_PRESET": "vercel"
-    }
-  },
   "env": {
     "SUPABASE_URL": "@supabase-url",
     "SUPABASE_PUBLISHABLE_KEY": "@supabase-publishable-key",
