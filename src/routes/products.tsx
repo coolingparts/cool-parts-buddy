@@ -115,6 +115,7 @@ function ProductsPage() {
                   <TableHead className="w-16">Img</TableHead>
                   <TableHead>SKU</TableHead>
                   <TableHead>Title</TableHead>
+                  <TableHead>Description</TableHead>
                   <TableHead className="text-right">eBay</TableHead>
                   <TableHead className="text-right">Our Price</TableHead>
                   <TableHead>Status</TableHead>
