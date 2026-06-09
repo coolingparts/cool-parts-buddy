@@ -123,10 +123,10 @@ function ProductsPage() {
               </TableHeader>
               <TableBody>
                 {isLoading && (
-                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
                 )}
                 {!isLoading && (data?.length ?? 0) === 0 && (
-                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No products yet. Scrape a URL or add one manually.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No products yet. Scrape a URL or add one manually.</TableCell></TableRow>
                 )}
                 {data?.map((p) => (
                   <TableRow key={p.id}>
