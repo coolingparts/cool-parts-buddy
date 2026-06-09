@@ -68,6 +68,16 @@ function AddSku() {
               <Label htmlFor="title">Title</Label>
               <Input id="title" required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Radiator Cooling Fan Assembly" />
             </div>
+            <div className="grid gap-2">
+              <Label htmlFor="description">Description (optional)</Label>
+              <Textarea
+                id="description"
+                rows={3}
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Product details, specs, fitment info…"
+              />
+            </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="ebay">eBay Price ($)</Label>
