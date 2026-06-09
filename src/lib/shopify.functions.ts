@@ -44,7 +44,7 @@ export const publishToShopify = createServerFn({ method: "POST" })
     };
 
     const res = await fetch(
-      `https://${store}/admin/api/2024-01/products.json`,
+      `https://${store}/admin/api/2025-01/products.json`,
       {
         method: "POST",
         headers: {
