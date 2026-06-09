@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 
@@ -17,7 +18,7 @@ function AddSku() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [form, setForm] = useState({
-    sku: "", title: "", ebay_price: "", image_url: "",
+    sku: "", title: "", ebay_price: "", image_url: "", description: "",
   });
 
   const create = useMutation({
@@ -26,6 +27,7 @@ function AddSku() {
       const { error } = await supabase.from("products").insert({
         sku: form.sku.trim(),
         title: form.title.trim(),
+        description: form.description.trim() || null,
         ebay_price: ebay,
         our_price: Number((ebay * 2).toFixed(2)),
         image_url: form.image_url.trim() || null,
@@ -65,6 +67,16 @@ function AddSku() {
             <div className="grid gap-2">
               <Label htmlFor="title">Title</Label>
               <Input id="title" required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Radiator Cooling Fan Assembly" />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="description">Description (optional)</Label>
+              <Textarea
+                id="description"
+                rows={3}
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Product details, specs, fitment info…"
+              />
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="grid gap-2">

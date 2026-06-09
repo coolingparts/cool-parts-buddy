@@ -17,10 +17,12 @@ export type Database = {
       products: {
         Row: {
           created_at: string
+          description: string | null
           ebay_price: number
           id: string
           image_url: string | null
           our_price: number
+          shopify_id: string | null
           sku: string
           source_url: string | null
           status: Database["public"]["Enums"]["product_status"]
@@ -29,10 +31,12 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          description?: string | null
           ebay_price?: number
           id?: string
           image_url?: string | null
           our_price?: number
+          shopify_id?: string | null
           sku: string
           source_url?: string | null
           status?: Database["public"]["Enums"]["product_status"]
@@ -41,10 +45,12 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          description?: string | null
           ebay_price?: number
           id?: string
           image_url?: string | null
           our_price?: number
+          shopify_id?: string | null
           sku?: string
           source_url?: string | null
           status?: Database["public"]["Enums"]["product_status"]

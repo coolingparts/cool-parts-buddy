@@ -1,14 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { CheckCircle2, Rocket, Trash2 } from "lucide-react";
+import { CheckCircle2, Rocket, Trash2, Pencil } from "lucide-react";
 
 export const Route = createFileRoute("/products")({
   head: () => ({ meta: [{ title: "Products · Cooling Parts Supply" }] }),
@@ -20,10 +24,12 @@ type Product = {
   id: string;
   sku: string;
   title: string;
+  description: string | null;
   ebay_price: number;
   our_price: number;
   image_url: string | null;
   status: Status;
+  shopify_id: string | null;
 };
 
 function statusBadge(s: Status) {
@@ -34,12 +40,15 @@ function statusBadge(s: Status) {
 
 function ProductsPage() {
   const qc = useQueryClient();
+  const [editProduct, setEditProduct] = useState<Product | null>(null);
+  const [editDesc, setEditDesc] = useState("");
+
   const { data, isLoading } = useQuery({
     queryKey: ["products"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("products")
-        .select("id, sku, title, ebay_price, our_price, image_url, status")
+        .select("id, sku, title, description, ebay_price, our_price, image_url, status, shopify_id")
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data as Product[];
@@ -59,6 +68,19 @@ function ProductsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const updateDescription = useMutation({
+    mutationFn: async ({ id, description }: { id: string; description: string }) => {
+      const { error } = await supabase.from("products").update({ description }).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Description saved");
+      qc.invalidateQueries({ queryKey: ["products"] });
+      setEditProduct(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const remove = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("products").delete().eq("id", id);
@@ -70,6 +92,11 @@ function ProductsPage() {
       qc.invalidateQueries({ queryKey: ["product-stats"] });
     },
   });
+
+  const openEdit = (p: Product) => {
+    setEditProduct(p);
+    setEditDesc(p.description ?? "");
+  };
 
   return (
     <div className="space-y-6">
@@ -88,6 +115,7 @@ function ProductsPage() {
                   <TableHead className="w-16">Img</TableHead>
                   <TableHead>SKU</TableHead>
                   <TableHead>Title</TableHead>
+                  <TableHead>Description</TableHead>
                   <TableHead className="text-right">eBay</TableHead>
                   <TableHead className="text-right">Our Price</TableHead>
                   <TableHead>Status</TableHead>
@@ -96,10 +124,10 @@ function ProductsPage() {
               </TableHeader>
               <TableBody>
                 {isLoading && (
-                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
                 )}
                 {!isLoading && (data?.length ?? 0) === 0 && (
-                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No products yet. Scrape a URL or add one manually.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No products yet. Scrape a URL or add one manually.</TableCell></TableRow>
                 )}
                 {data?.map((p) => (
                   <TableRow key={p.id}>
@@ -112,11 +140,21 @@ function ProductsPage() {
                     </TableCell>
                     <TableCell className="font-mono text-xs">{p.sku}</TableCell>
                     <TableCell className="max-w-md truncate">{p.title}</TableCell>
+                    <TableCell>
+                      {p.description ? (
+                        <span className="text-xs text-muted-foreground max-w-[200px] truncate block">{p.description}</span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground italic">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">${Number(p.ebay_price).toFixed(2)}</TableCell>
                     <TableCell className="text-right font-medium text-primary">${Number(p.our_price).toFixed(2)}</TableCell>
                     <TableCell>{statusBadge(p.status)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
                         {p.status === "pending" && (
                           <Button size="sm" variant="secondary"
                             onClick={() => updateStatus.mutate({ id: p.id, status: "approved" })}>
@@ -141,6 +179,45 @@ function ProductsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={!!editProduct} onOpenChange={(open) => { if (!open) setEditProduct(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Product</DialogTitle>
+          </DialogHeader>
+          {editProduct && (
+            <div className="space-y-4">
+              <div className="grid gap-1">
+                <span className="text-xs text-muted-foreground">SKU</span>
+                <span className="font-mono text-sm">{editProduct.sku}</span>
+              </div>
+              <div className="grid gap-1">
+                <span className="text-xs text-muted-foreground">Title</span>
+                <span className="text-sm">{editProduct.title}</span>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="desc">Description</Label>
+                <Textarea
+                  id="desc"
+                  rows={5}
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  placeholder="Enter product description…"
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => setEditProduct(null)}>Cancel</Button>
+                <Button
+                  onClick={() => updateDescription.mutate({ id: editProduct.id, description: editDesc })}
+                  disabled={updateDescription.isPending}
+                >
+                  {updateDescription.isPending ? "Saving…" : "Save Description"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
