@@ -40,12 +40,15 @@ function statusBadge(s: Status) {
 
 function ProductsPage() {
   const qc = useQueryClient();
+  const [editProduct, setEditProduct] = useState<Product | null>(null);
+  const [editDesc, setEditDesc] = useState("");
+
   const { data, isLoading } = useQuery({
     queryKey: ["products"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("products")
-        .select("id, sku, title, ebay_price, our_price, image_url, status")
+        .select("id, sku, title, description, ebay_price, our_price, image_url, status, shopify_id")
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data as Product[];
@@ -65,6 +68,19 @@ function ProductsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const updateDescription = useMutation({
+    mutationFn: async ({ id, description }: { id: string; description: string }) => {
+      const { error } = await supabase.from("products").update({ description }).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Description saved");
+      qc.invalidateQueries({ queryKey: ["products"] });
+      setEditProduct(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const remove = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("products").delete().eq("id", id);
@@ -76,6 +92,11 @@ function ProductsPage() {
       qc.invalidateQueries({ queryKey: ["product-stats"] });
     },
   });
+
+  const openEdit = (p: Product) => {
+    setEditProduct(p);
+    setEditDesc(p.description ?? "");
+  };
 
   return (
     <div className="space-y-6">
