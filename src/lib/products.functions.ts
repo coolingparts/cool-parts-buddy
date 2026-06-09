@@ -306,6 +306,62 @@ function scrapeGeneric(html: string, source: string): ScrapedItem[] {
   return extractOgMeta(html, source);
 }
 
+// ─── Strategy: Sitemap (.xml.gz with categoryproductlisting) ─────────────────
+
+async function scrapeSitemap(
+  indexUrl: string,
+): Promise<{ items: ScrapedItem[]; pagesVisited: number }> {
+  let pagesVisited = 0;
+
+  // 1. Fetch the sitemap index XML
+  const indexXml = await fetchHtml(indexUrl);
+  pagesVisited++;
+
+  // 2. Find the <loc> containing "categoryproductlisting"
+  const locRe = /<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi;
+  let catalogLoc: string | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = locRe.exec(indexXml))) {
+    if (m[1].includes("categoryproductlisting")) {
+      catalogLoc = m[1].trim();
+      break;
+    }
+  }
+
+  if (!catalogLoc) return { items: [], pagesVisited };
+
+  // 3. Fetch the .xml.gz and decompress with node:zlib
+  const gzRes = await fetch(catalogLoc, {
+    headers: { "User-Agent": randomUA(), Accept: "application/gzip, */*" },
+  });
+  if (!gzRes.ok) throw new Error(`Sitemap gz fetch failed: HTTP ${gzRes.status}`);
+  pagesVisited++;
+
+  const buf = Buffer.from(await gzRes.arrayBuffer());
+  const { gunzipSync } = await import("node:zlib");
+  const xml = gunzipSync(buf).toString("utf-8");
+
+  // 4. Extract all <loc> URLs, cap at 500
+  const items: ScrapedItem[] = [];
+  const itemLocRe = /<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi;
+  while ((m = itemLocRe.exec(xml)) && items.length < 500) {
+    const locUrl = m[1].trim();
+
+    // 5. Parse sku/title from the last path segment
+    const slug = locUrl.split("/").filter(Boolean).pop() ?? "";
+    if (!slug || slug.includes(".xml") || slug.includes(".gz")) continue;
+
+    const title = slug
+      .replace(/[_-]+/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .trim();
+
+    items.push({ sku: slug, title, price: 0, image: null, brand: null, source: locUrl });
+  }
+
+  return { items, pagesVisited };
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 export const scrapeUrl = createServerFn({ method: "POST" })
@@ -323,7 +379,12 @@ export const scrapeUrl = createServerFn({ method: "POST" })
     let strategy = "generic";
 
     try {
-      if (hostname.includes("partstown.com")) {
+      if (data.url.includes("sitemap") && data.url.includes(".xml")) {
+        strategy = "sitemap";
+        const r = await scrapeSitemap(data.url);
+        items = r.items;
+        pagesVisited = r.pagesVisited;
+      } else if (hostname.includes("partstown.com")) {
         strategy = "partstown";
         const r = await scrapePartsTown(data.url);
         items = r.items;
