@@ -140,11 +140,21 @@ function ProductsPage() {
                     </TableCell>
                     <TableCell className="font-mono text-xs">{p.sku}</TableCell>
                     <TableCell className="max-w-md truncate">{p.title}</TableCell>
+                    <TableCell>
+                      {p.description ? (
+                        <span className="text-xs text-muted-foreground max-w-[200px] truncate block">{p.description}</span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground italic">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">${Number(p.ebay_price).toFixed(2)}</TableCell>
                     <TableCell className="text-right font-medium text-primary">${Number(p.our_price).toFixed(2)}</TableCell>
                     <TableCell>{statusBadge(p.status)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
                         {p.status === "pending" && (
                           <Button size="sm" variant="secondary"
                             onClick={() => updateStatus.mutate({ id: p.id, status: "approved" })}>
