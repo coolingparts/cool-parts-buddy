@@ -179,6 +179,45 @@ function ProductsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={!!editProduct} onOpenChange={(open) => { if (!open) setEditProduct(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Product</DialogTitle>
+          </DialogHeader>
+          {editProduct && (
+            <div className="space-y-4">
+              <div className="grid gap-1">
+                <span className="text-xs text-muted-foreground">SKU</span>
+                <span className="font-mono text-sm">{editProduct.sku}</span>
+              </div>
+              <div className="grid gap-1">
+                <span className="text-xs text-muted-foreground">Title</span>
+                <span className="text-sm">{editProduct.title}</span>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="desc">Description</Label>
+                <Textarea
+                  id="desc"
+                  rows={5}
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  placeholder="Enter product description…"
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => setEditProduct(null)}>Cancel</Button>
+                <Button
+                  onClick={() => updateDescription.mutate({ id: editProduct.id, description: editDesc })}
+                  disabled={updateDescription.isPending}
+                >
+                  {updateDescription.isPending ? "Saving…" : "Save Description"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
