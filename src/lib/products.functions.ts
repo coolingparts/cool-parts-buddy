@@ -44,15 +44,22 @@ function jitter(base: number) {
 async function fetchHtml(url: string, attempt = 0): Promise<string> {
   if (attempt > 0) await sleep(jitter(800 * attempt));
 
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": randomUA(),
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-      "Cache-Control": "no-cache",
-      Referer: "https://www.google.com/",
-    },
-  });
+  const beeKey = process.env.SCRAPINGBEE_KEY;
+  const fetchUrl = beeKey
+    ? `https://app.scrapingbee.com/api/v1/?api_key=${beeKey}&url=${encodeURIComponent(url)}&render_js=true`
+    : url;
+
+  const headers: Record<string, string> = beeKey
+    ? {}
+    : {
+        "User-Agent": randomUA(),
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+        Referer: "https://www.google.com/",
+      };
+
+  const res = await fetch(fetchUrl, { headers });
 
   if ((res.status === 429 || res.status === 403) && attempt < 2) {
     const retryAfter = Number(res.headers.get("Retry-After") ?? 0);
