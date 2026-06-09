@@ -24,10 +24,12 @@ type Product = {
   id: string;
   sku: string;
   title: string;
+  description: string | null;
   ebay_price: number;
   our_price: number;
   image_url: string | null;
   status: Status;
+  shopify_id: string | null;
 };
 
 function statusBadge(s: Status) {
