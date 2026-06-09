@@ -245,10 +245,14 @@ function scrapeNextData(html: string, source: string): ScrapedItem[] {
 // ─── Strategy: Grainger ("products":[] in scripts) ────────────────────────────
 
 function scrapeGrainger(html: string, source: string): ScrapedItem[] {
+  console.log("[grainger] html preview:\n", html.slice(0, 3000));
+
   const results = new Map<string, ScrapedItem>();
-  const re = /"products"\s*:\s*(\[[\s\S]*?\])/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(html))) {
+
+  // 1. "products":[] arrays
+  const productsRe = /"products"\s*:\s*(\[[\s\S]*?\])/g;
+  while ((m = productsRe.exec(html))) {
     try {
       const arr = JSON.parse(m[1]);
       if (!Array.isArray(arr)) continue;
@@ -258,9 +262,58 @@ function scrapeGrainger(html: string, source: string): ScrapedItem[] {
       }
     } catch { /* ignore */ }
   }
+
+  // 2. window.__PRELOADED_STATE__
+  const preloadedM = /window\.__PRELOADED_STATE__\s*=\s*(\{[\s\S]*?\});\s*(?:<\/script>|[a-z])/i.exec(html);
+  if (preloadedM) {
+    try {
+      const state = JSON.parse(preloadedM[1]);
+      walkJson(state, (obj) => {
+        const item = pluckItem(obj, source);
+        if (item) { results.set(item.sku, item); return true; }
+        return false;
+      });
+    } catch { /* ignore */ }
+  }
+
+  // 3. window.dataLayer — find objects with a products array
+  const dataLayerRe = /window\.dataLayer\s*=\s*(\[[\s\S]*?\]);\s*(?:<\/script>|[a-z])/i.exec(html);
+  if (dataLayerRe) {
+    try {
+      const layer = JSON.parse(dataLayerRe[1]);
+      if (Array.isArray(layer)) {
+        for (const entry of layer) {
+          const ecom = (entry as ObjAny)?.ecommerce as ObjAny | undefined;
+          const prods = (ecom?.detail as ObjAny)?.products
+            ?? ecom?.impressions
+            ?? ecom?.items
+            ?? (entry as ObjAny)?.products;
+          if (!Array.isArray(prods)) continue;
+          for (const p of prods) {
+            const item = pluckItem(p as ObjAny, source);
+            if (item) results.set(item.sku, item);
+          }
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // 4. Any JSON blob containing "itemNumber" or "partNumber"
+  const blobRe = /(\{[^{}]*(?:"itemNumber"|"partNumber")[^{}]*\})/g;
+  while ((m = blobRe.exec(html))) {
+    try {
+      const obj = JSON.parse(m[1]);
+      const item = pluckItem(obj as ObjAny, source);
+      if (item && !results.has(item.sku)) results.set(item.sku, item);
+    } catch { /* ignore */ }
+  }
+
+  // 5. JSON-LD fallback
   for (const item of extractJsonLd(html, source)) {
     if (!results.has(item.sku)) results.set(item.sku, item);
   }
+
+  console.log(`[grainger] found ${results.size} items`);
   return Array.from(results.values());
 }
 
