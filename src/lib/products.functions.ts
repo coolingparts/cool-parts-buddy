@@ -390,49 +390,36 @@ async function scrapeSitemap(
 ): Promise<{ items: ScrapedItem[]; pagesVisited: number }> {
   let pagesVisited = 0;
 
-  // 1. Fetch the sitemap index XML
+  // 1. Fetch sitemap index
   const indexXml = await fetchHtml(indexUrl);
   pagesVisited++;
 
-  // 2. Collect ALL <loc> containing "models-com" (models-com-0.xml.gz, models-com-1.xml.gz, …)
+  // 2. Find the <loc> for models-com-0.xml.gz
   const locRe = /<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi;
-  const modelLocs: string[] = [];
+  let gzUrl: string | null = null;
   let m: RegExpExecArray | null;
   while ((m = locRe.exec(indexXml))) {
-    if (m[1].includes("models-com")) modelLocs.push(m[1].trim());
+    if (m[1].includes("models-com-0")) { gzUrl = m[1].trim(); break; }
   }
 
-  if (modelLocs.length === 0) return { items: [], pagesVisited };
+  if (!gzUrl) return { items: [], pagesVisited };
 
-  // 3. Fetch and decompress up to 3 files
+  // 3. Fetch and decompress
+  const xml = await decompressGz(gzUrl);
+  pagesVisited++;
+
+  // 4. Extract <loc> URLs, cap at 500
   const items: ScrapedItem[] = [];
-  const seen = new Set<string>();
+  const itemLocRe = /<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi;
+  while ((m = itemLocRe.exec(xml)) && items.length < 500) {
+    const locUrl = m[1].trim();
 
-  for (const gzUrl of modelLocs.slice(0, 3)) {
-    let xml: string;
-    try {
-      xml = await decompressGz(gzUrl);
-    } catch { continue; }
-    pagesVisited++;
+    // 5. Last path segment, strip query string → SKU
+    const slug = locUrl.split("?")[0].split("/").filter(Boolean).pop() ?? "";
+    if (!slug || slug.includes(".xml") || slug.includes(".gz")) continue;
 
-    // 4. Extract <loc> URLs — individual part/model pages
-    const itemLocRe = /<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi;
-    while ((m = itemLocRe.exec(xml)) && items.length < 500) {
-      const locUrl = m[1].trim();
-
-      // 5. Parse SKU: last path segment, strip query strings
-      const rawSlug = locUrl.split("?")[0].split("/").filter(Boolean).pop() ?? "";
-      if (!rawSlug || rawSlug.includes(".xml") || rawSlug.includes(".gz")) continue;
-      if (seen.has(rawSlug)) continue;
-      seen.add(rawSlug);
-
-      // 6. Title: slug → title case
-      const title = slugToTitle(rawSlug);
-      items.push({ sku: rawSlug, title, price: 0, image: null, brand: null, source: locUrl });
-    }
-
-    if (items.length >= 500) break;
-    await sleep(jitter(400));
+    // 6. Title: slug → title case; price defaults to 0
+    items.push({ sku: slug, title: slugToTitle(slug), price: 0, image: null, brand: null, source: locUrl });
   }
 
   return { items, pagesVisited };
