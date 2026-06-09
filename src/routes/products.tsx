@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { CheckCircle2, ExternalLink, Loader2, Rocket, Trash2, Pencil } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2, Rocket, Trash2, Pencil, Download } from "lucide-react";
 
 export const Route = createFileRoute("/products")({
   head: () => ({ meta: [{ title: "Products · Cooling Parts Supply" }] }),
@@ -26,6 +26,7 @@ type Product = {
   id: string;
   sku: string;
   title: string;
+  brand: string | null;
   description: string | null;
   ebay_price: number;
   our_price: number;
@@ -52,7 +53,7 @@ function ProductsPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("products")
-        .select("id, sku, title, description, ebay_price, our_price, image_url, status, shopify_id")
+        .select("id, sku, title, brand, description, ebay_price, our_price, image_url, status, shopify_id")
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data as Product[];
@@ -148,6 +149,103 @@ function ProductsPage() {
     setEditDesc(p.description ?? "");
   };
 
+  function slugify(text: string) {
+    return text.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  }
+
+  function csvCell(value: string | number | null | undefined) {
+    const s = value == null ? "" : String(value);
+    if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  }
+
+  async function handleExportCsv() {
+    const { data: approved, error } = await supabase
+      .from("products")
+      .select("sku, title, brand, description, ebay_price, our_price, image_url")
+      .eq("status", "approved");
+
+    if (error) { toast.error(error.message); return; }
+    if (!approved?.length) { toast.info("No approved products to export"); return; }
+
+    const headers = [
+      "Handle", "Title", "Body (HTML)", "Vendor", "Product Category", "Type", "Tags",
+      "Published", "Option1 Name", "Option1 Value", "Option1 Linked To",
+      "Option2 Name", "Option2 Value", "Option2 Linked To",
+      "Option3 Name", "Option3 Value", "Option3 Linked To",
+      "Variant SKU", "Variant Grams", "Variant Inventory Tracker", "Variant Inventory Qty",
+      "Variant Inventory Policy", "Variant Fulfillment Service", "Variant Price",
+      "Variant Compare At Price", "Variant Requires Shipping", "Variant Taxable",
+      "Unit Price Total Measure", "Unit Price Total Measure Unit",
+      "Unit Price Base Measure", "Unit Price Base Measure Unit",
+      "Variant Barcode", "Image Src", "Image Position", "Image Alt Text", "Gift Card",
+      "SEO Title", "SEO Description",
+      "Color (product.metafields.shopify.color-pattern)",
+      "Controller design (product.metafields.shopify.controller-design)",
+      "Power source (product.metafields.shopify.power-source)",
+      "Variant Image", "Variant Weight Unit", "Variant Tax Code", "Cost per item", "Status",
+    ];
+
+    const rows = approved.map((p) => [
+      slugify(p.title),         // Handle
+      p.title,                  // Title
+      p.description ?? "",      // Body (HTML)
+      p.brand ?? "",            // Vendor
+      "",                       // Product Category
+      "",                       // Type
+      "",                       // Tags
+      "TRUE",                   // Published
+      "Title",                  // Option1 Name
+      "Default Title",          // Option1 Value
+      "",                       // Option1 Linked To
+      "",                       // Option2 Name
+      "",                       // Option2 Value
+      "",                       // Option2 Linked To
+      "",                       // Option3 Name
+      "",                       // Option3 Value
+      "",                       // Option3 Linked To
+      p.sku,                    // Variant SKU
+      "0",                      // Variant Grams
+      "",                       // Variant Inventory Tracker
+      "10",                     // Variant Inventory Qty
+      "deny",                   // Variant Inventory Policy
+      "manual",                 // Variant Fulfillment Service
+      Number(p.our_price).toFixed(2), // Variant Price
+      "",                       // Variant Compare At Price
+      "TRUE",                   // Variant Requires Shipping
+      "TRUE",                   // Variant Taxable
+      "",                       // Unit Price Total Measure
+      "",                       // Unit Price Total Measure Unit
+      "",                       // Unit Price Base Measure
+      "",                       // Unit Price Base Measure Unit
+      "",                       // Variant Barcode
+      p.image_url ?? "",        // Image Src
+      p.image_url ? "1" : "",   // Image Position
+      "",                       // Image Alt Text
+      "",                       // Gift Card
+      "",                       // SEO Title
+      "",                       // SEO Description
+      "",                       // Color
+      "",                       // Controller design
+      "",                       // Power source
+      "",                       // Variant Image
+      "lb",                     // Variant Weight Unit
+      "",                       // Variant Tax Code
+      Number(p.ebay_price).toFixed(2), // Cost per item
+      "active",                 // Status
+    ]);
+
+    const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `shopify-products-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${approved.length} product(s)`);
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -156,7 +254,12 @@ function ProductsPage() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle>Catalog ({data?.length ?? 0})</CardTitle></CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Catalog ({data?.length ?? 0})</CardTitle>
+          <Button variant="outline" size="sm" onClick={handleExportCsv}>
+            <Download className="mr-1 h-3.5 w-3.5" /> Export CSV
+          </Button>
+        </CardHeader>
         <CardContent>
           <div className="rounded-md border border-border overflow-hidden">
             <Table>

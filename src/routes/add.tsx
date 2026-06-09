@@ -18,7 +18,7 @@ function AddSku() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [form, setForm] = useState({
-    sku: "", title: "", ebay_price: "", image_url: "", description: "",
+    sku: "", title: "", brand: "", ebay_price: "", image_url: "", description: "",
   });
 
   const create = useMutation({
@@ -27,6 +27,7 @@ function AddSku() {
       const { error } = await supabase.from("products").insert({
         sku: form.sku.trim(),
         title: form.title.trim(),
+        brand: form.brand.trim() || null,
         description: form.description.trim() || null,
         ebay_price: ebay,
         our_price: Number((ebay * 2).toFixed(2)),
@@ -67,6 +68,10 @@ function AddSku() {
             <div className="grid gap-2">
               <Label htmlFor="title">Title</Label>
               <Input id="title" required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Radiator Cooling Fan Assembly" />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="brand">Brand (optional)</Label>
+              <Input id="brand" value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} placeholder="Denso, Spectra Premium…" />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="description">Description (optional)</Label>

@@ -16,6 +16,7 @@ export type Database = {
     Tables: {
       products: {
         Row: {
+          brand: string | null
           created_at: string
           description: string | null
           ebay_price: number
@@ -30,6 +31,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          brand?: string | null
           created_at?: string
           description?: string | null
           ebay_price?: number
@@ -44,6 +46,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          brand?: string | null
           created_at?: string
           description?: string | null
           ebay_price?: number
