@@ -3,11 +3,12 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { scrapeUrl } from "@/lib/products.functions";
+import { scrapeUrl, type ScrapedItem } from "@/lib/products.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -19,12 +20,37 @@ export const Route = createFileRoute("/scraper")({
   component: ScraperPage,
 });
 
-type Scraped = { sku: string; title: string; price: number; image: string | null };
+const STRATEGY_LABELS: Record<string, string> = {
+  partstown: "PartsTown",
+  supplyhouse: "SupplyHouse",
+  grainger: "Grainger",
+  johnsoncontrols: "Johnson Controls",
+  "next.js": "Next.js",
+  "initial-state": "Initial State",
+  generic: "Generic",
+};
+
+function StrategyBadge({ strategy }: { strategy: string }) {
+  const label = STRATEGY_LABELS[strategy] ?? strategy;
+  const colors: Record<string, string> = {
+    partstown: "bg-blue-100 text-blue-800",
+    supplyhouse: "bg-green-100 text-green-800",
+    grainger: "bg-red-100 text-red-800",
+    johnsoncontrols: "bg-purple-100 text-purple-800",
+  };
+  const cls = colors[strategy] ?? "bg-muted text-muted-foreground";
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>
+      {label}
+    </span>
+  );
+}
 
 function ScraperPage() {
   const [url, setUrl] = useState("");
-  const [results, setResults] = useState<Scraped[]>([]);
+  const [results, setResults] = useState<ScrapedItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [meta, setMeta] = useState<{ strategy: string; pagesVisited: number } | null>(null);
   const scrapeFn = useServerFn(scrapeUrl);
   const qc = useQueryClient();
 
@@ -33,8 +59,9 @@ function ScraperPage() {
     onSuccess: (res) => {
       setResults(res.items);
       setSelected(new Set(res.items.map((i) => i.sku)));
+      setMeta({ strategy: res.strategy, pagesVisited: res.pagesVisited });
       if (res.error) toast.warning(res.error);
-      else toast.success(`Found ${res.items.length} products`);
+      else toast.success(`Found ${res.items.length} product(s) via ${res.strategy}`);
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -46,10 +73,11 @@ function ScraperPage() {
         .map((r) => ({
           sku: r.sku,
           title: r.title,
+          brand: r.brand ?? null,
           ebay_price: r.price,
           our_price: Number((r.price * 2).toFixed(2)),
           image_url: r.image,
-          source_url: url,
+          source_url: r.source,
           status: "pending" as const,
         }));
       if (rows.length === 0) throw new Error("Select at least one row");
@@ -71,6 +99,12 @@ function ScraperPage() {
       if (next.has(sku)) next.delete(sku); else next.add(sku);
       return next;
     });
+  };
+
+  const toggleAll = () => {
+    setSelected((prev) =>
+      prev.size === results.length ? new Set() : new Set(results.map((r) => r.sku)),
+    );
   };
 
   return (
@@ -100,9 +134,22 @@ function ScraperPage() {
 
       {results.length > 0 && (
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Results ({results.length})</CardTitle>
-            <Button onClick={() => importSelected.mutate()} disabled={importSelected.isPending || selected.size === 0}>
+          <CardHeader className="flex flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3 flex-wrap">
+              <CardTitle>Results ({results.length})</CardTitle>
+              {meta && (
+                <>
+                  <StrategyBadge strategy={meta.strategy} />
+                  <Badge variant="outline" className="text-xs font-normal">
+                    {meta.pagesVisited} page{meta.pagesVisited !== 1 ? "s" : ""} visited
+                  </Badge>
+                </>
+              )}
+            </div>
+            <Button
+              onClick={() => importSelected.mutate()}
+              disabled={importSelected.isPending || selected.size === 0}
+            >
               <Download className="mr-2 h-4 w-4" />
               Import {selected.size} selected
             </Button>
@@ -112,10 +159,16 @@ function ScraperPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-10" />
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={selected.size === results.length && results.length > 0}
+                        onCheckedChange={toggleAll}
+                      />
+                    </TableHead>
                     <TableHead className="w-16">Img</TableHead>
                     <TableHead>SKU</TableHead>
                     <TableHead>Title</TableHead>
+                    <TableHead>Brand</TableHead>
                     <TableHead className="text-right">eBay Price</TableHead>
                     <TableHead className="text-right">Our Price</TableHead>
                   </TableRow>
@@ -134,7 +187,8 @@ function ScraperPage() {
                         )}
                       </TableCell>
                       <TableCell className="font-mono text-xs">{r.sku}</TableCell>
-                      <TableCell className="max-w-md truncate">{r.title}</TableCell>
+                      <TableCell className="max-w-xs truncate">{r.title}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{r.brand ?? "—"}</TableCell>
                       <TableCell className="text-right">${r.price.toFixed(2)}</TableCell>
                       <TableCell className="text-right font-medium text-primary">
                         ${(r.price * 2).toFixed(2)}

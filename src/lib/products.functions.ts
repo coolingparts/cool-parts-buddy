@@ -1,69 +1,365 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-const scrapeInput = z.object({ url: z.string().url() });
+const USER_AGENTS = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+];
 
-type Scraped = {
+export type ScrapedItem = {
   sku: string;
   title: string;
   price: number;
   image: string | null;
+  brand: string | null;
+  source: string;
 };
 
-function extractScraped(html: string): Scraped[] {
-  const results = new Map<string, Scraped>();
+export type ScrapeResult = {
+  items: ScrapedItem[];
+  error: string | null;
+  pagesVisited: number;
+  strategy: string;
+};
 
-  // Try JSON-LD Product blocks first
-  const ldRegex = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+const scrapeInput = z.object({ url: z.string().url() });
+
+// ─── HTTP helpers ─────────────────────────────────────────────────────────────
+
+function randomUA() {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((r) => setTimeout(r, ms));
+}
+
+function jitter(base: number) {
+  return base + Math.floor(Math.random() * base);
+}
+
+async function fetchHtml(url: string, attempt = 0): Promise<string> {
+  if (attempt > 0) await sleep(jitter(800 * attempt));
+
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": randomUA(),
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Cache-Control": "no-cache",
+      Referer: "https://www.google.com/",
+    },
+  });
+
+  if ((res.status === 429 || res.status === 403) && attempt < 2) {
+    const retryAfter = Number(res.headers.get("Retry-After") ?? 0);
+    await sleep(retryAfter > 0 ? retryAfter * 1000 : jitter(3000));
+    return fetchHtml(url, attempt + 1);
+  }
+
+  if (!res.ok) {
+    if (attempt < 2) return fetchHtml(url, attempt + 1);
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  return res.text();
+}
+
+// ─── Shared extractors ────────────────────────────────────────────────────────
+
+function extractJsonLd(html: string, source: string): ScrapedItem[] {
+  const results = new Map<string, ScrapedItem>();
+  const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let m: RegExpExecArray | null;
-  while ((m = ldRegex.exec(html))) {
+  while ((m = re.exec(html))) {
     try {
-      const json = JSON.parse(m[1].trim());
-      const items = Array.isArray(json) ? json : json["@graph"] ?? [json];
-      for (const it of items) {
-        if (!it || typeof it !== "object") continue;
-        const type = it["@type"];
+      const doc = JSON.parse(m[1].trim());
+      const nodes: unknown[] = Array.isArray(doc)
+        ? doc
+        : doc["@graph"]
+          ? (doc["@graph"] as unknown[])
+          : [doc];
+      for (const node of nodes) {
+        if (!node || typeof node !== "object") continue;
+        const n = node as Record<string, unknown>;
+        const type = n["@type"];
         if (type !== "Product" && !(Array.isArray(type) && type.includes("Product"))) continue;
-        const sku = String(it.sku ?? it.mpn ?? it.productID ?? it.gtin ?? it.name ?? "").trim();
-        const title = String(it.name ?? "").trim();
-        const offers = Array.isArray(it.offers) ? it.offers[0] : it.offers;
-        const priceRaw = offers?.price ?? offers?.lowPrice ?? it.price ?? 0;
+        const sku = String(n.sku ?? n.mpn ?? n.productID ?? "").trim();
+        const title = String(n.name ?? "").trim();
+        if (!sku || !title) continue;
+        const offers = Array.isArray(n.offers) ? n.offers[0] : n.offers;
+        const priceRaw = (offers as Record<string, unknown>)?.price ??
+          (offers as Record<string, unknown>)?.lowPrice ?? 0;
         const price = Number(String(priceRaw).replace(/[^0-9.]/g, "")) || 0;
-        const image = Array.isArray(it.image) ? it.image[0] : it.image ?? null;
-        if (sku && title) results.set(sku, { sku, title, price, image: image ?? null });
+        const imgRaw = n.image;
+        const image = Array.isArray(imgRaw) ? String(imgRaw[0]) : imgRaw ? String(imgRaw) : null;
+        const brandRaw = n.brand;
+        const brand =
+          typeof brandRaw === "string"
+            ? brandRaw || null
+            : brandRaw && typeof brandRaw === "object"
+              ? String((brandRaw as Record<string, unknown>).name ?? "") || null
+              : null;
+        results.set(sku, { sku, title, price, image, brand, source });
       }
     } catch { /* ignore */ }
   }
-
-  if (results.size > 0) return Array.from(results.values());
-
-  // Fallback: scan for product cards via simple heuristics
-  const cardRegex =
-    /data-sku=["']([^"']+)["'][\s\S]{0,800}?(?:alt=["']([^"']*)["'][\s\S]{0,400}?)?\$?\s*([0-9]+(?:\.[0-9]{1,2})?)/gi;
-  while ((m = cardRegex.exec(html))) {
-    const sku = m[1].trim();
-    const title = (m[2] || sku).trim();
-    const price = Number(m[3]) || 0;
-    if (!results.has(sku)) results.set(sku, { sku, title, price, image: null });
-  }
-
   return Array.from(results.values());
 }
 
+function extractOgMeta(html: string, source: string): ScrapedItem[] {
+  const get = (prop: string) =>
+    new RegExp(`property=["']${prop}["'][^>]*content=["']([^"']+)["']`, "i").exec(html)?.[1]?.trim() ??
+    new RegExp(`content=["']([^"']+)["'][^>]*property=["']${prop}["']`, "i").exec(html)?.[1]?.trim();
+
+  const title = get("og:title");
+  if (!title) return [];
+  const image = get("og:image") ?? null;
+  const priceStr = get("product:price:amount") ?? "0";
+  const price = Number(priceStr.replace(/[^0-9.]/g, "")) || 0;
+  const skuMeta = /name=["']sku["'][^>]*content=["']([^"']+)["']/i.exec(html)?.[1]?.trim();
+  const sku = skuMeta ?? title.slice(0, 40).replace(/\s+/g, "-");
+  return [{ sku, title, price, image, brand: null, source }];
+}
+
+// ─── Walk helper for JSON state blobs ─────────────────────────────────────────
+
+type ObjAny = Record<string, unknown>;
+
+function walkJson(
+  node: unknown,
+  collect: (obj: ObjAny) => boolean,
+  depth = 0,
+): void {
+  if (depth > 12 || !node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const child of node) walkJson(child, collect, depth + 1);
+    return;
+  }
+  const obj = node as ObjAny;
+  if (!collect(obj)) {
+    for (const val of Object.values(obj)) walkJson(val, collect, depth + 1);
+  }
+}
+
+function pluckItem(obj: ObjAny, source: string): ScrapedItem | null {
+  const sku = String(obj.sku ?? obj.partNumber ?? obj.itemNumber ?? obj.part_number ?? "").trim();
+  const title = String(obj.name ?? obj.title ?? obj.displayName ?? obj.description ?? "").trim();
+  if (!sku || !title || sku.length > 60 || title.length < 3) return null;
+  const priceRaw = obj.price ?? obj.listPrice ?? obj.salePrice ?? obj.retailPrice ?? obj.unitPrice ?? 0;
+  const price = Number(String(priceRaw).replace(/[^0-9.]/g, "")) || 0;
+  const imgRaw = obj.image ?? obj.imageUrl ?? obj.thumbnail;
+  const image =
+    typeof imgRaw === "string"
+      ? imgRaw
+      : Array.isArray(imgRaw)
+        ? String(imgRaw[0])
+        : null;
+  const brandRaw = obj.brand ?? obj.brandName ?? obj.manufacturer;
+  const brand =
+    typeof brandRaw === "string"
+      ? brandRaw || null
+      : brandRaw && typeof brandRaw === "object"
+        ? String((brandRaw as ObjAny).name ?? "") || null
+        : null;
+  return { sku, title, price, image, brand, source };
+}
+
+// ─── Strategy: PartsTown (paginate 5p, data-part-number + JSON-LD) ───────────
+
+async function scrapePartsTown(startUrl: string): Promise<{ items: ScrapedItem[]; pagesVisited: number }> {
+  const all = new Map<string, ScrapedItem>();
+  let pagesVisited = 0;
+
+  for (let page = 1; page <= 5; page++) {
+    const pageUrl = new URL(startUrl);
+    if (page > 1) pageUrl.searchParams.set("page", String(page));
+
+    let html: string;
+    try { html = await fetchHtml(pageUrl.toString()); } catch { break; }
+    pagesVisited++;
+
+    for (const item of extractJsonLd(html, pageUrl.toString())) all.set(item.sku, item);
+
+    const re = /data-part-number=["']([^"']+)["']/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html))) {
+      const sku = m[1].trim();
+      if (all.has(sku)) continue;
+      const chunk = html.slice(Math.max(0, m.index - 300), m.index + 1500);
+      const titleM = /(?:data-description|data-name|data-product-name|alt)=["']([^"']{5,200})["']/i.exec(chunk);
+      const priceM = /\$\s*([0-9,]+(?:\.[0-9]{1,2})?)/i.exec(chunk);
+      const imgM = /src=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp)(?:\?[^"']*)?)/i.exec(chunk);
+      const brandM = /data-brand=["']([^"']+)["']/i.exec(chunk);
+      if (titleM || priceM) {
+        all.set(sku, {
+          sku,
+          title: titleM?.[1]?.trim() ?? sku,
+          price: priceM ? Number(priceM[1].replace(/,/g, "")) : 0,
+          image: imgM?.[1] ?? null,
+          brand: brandM?.[1]?.trim() ?? null,
+          source: pageUrl.toString(),
+        });
+      }
+    }
+
+    if (page === 1 && all.size === 0) break;
+    const hasNext = new RegExp(`[?&]page=${page + 1}|rel=["']next["']`, "i").test(html);
+    if (!hasNext) break;
+    await sleep(jitter(900));
+  }
+
+  return { items: Array.from(all.values()), pagesVisited };
+}
+
+// ─── Strategy: SupplyHouse (__NEXT_DATA__) ────────────────────────────────────
+
+function scrapeNextData(html: string, source: string): ScrapedItem[] {
+  const m =
+    /<script[^>]*id=["']__NEXT_DATA__["'][^>]*type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/i.exec(html) ??
+    /<script[^>]*type=["']application\/json["'][^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i.exec(html);
+  if (!m) return [];
+
+  const results = new Map<string, ScrapedItem>();
+  try {
+    const data = JSON.parse(m[1]);
+    walkJson(data.props ?? data, (obj) => {
+      const item = pluckItem(obj, source);
+      if (item) { results.set(item.sku, item); return true; }
+      return false;
+    });
+  } catch { /* ignore */ }
+  return Array.from(results.values());
+}
+
+// ─── Strategy: Grainger ("products":[] in scripts) ────────────────────────────
+
+function scrapeGrainger(html: string, source: string): ScrapedItem[] {
+  const results = new Map<string, ScrapedItem>();
+  const re = /"products"\s*:\s*(\[[\s\S]*?\])/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    try {
+      const arr = JSON.parse(m[1]);
+      if (!Array.isArray(arr)) continue;
+      for (const p of arr) {
+        const item = pluckItem(p as ObjAny, source);
+        if (item) results.set(item.sku, item);
+      }
+    } catch { /* ignore */ }
+  }
+  for (const item of extractJsonLd(html, source)) {
+    if (!results.has(item.sku)) results.set(item.sku, item);
+  }
+  return Array.from(results.values());
+}
+
+// ─── Strategy: JohnsonControls (window.__INITIAL_STATE__) ────────────────────
+
+function scrapeInitialState(html: string, source: string): ScrapedItem[] {
+  const m = /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});\s*(?:<\/script>|[a-z])/i.exec(html);
+  if (!m) return [];
+
+  const results = new Map<string, ScrapedItem>();
+  try {
+    const state = JSON.parse(m[1]);
+    walkJson(state, (obj) => {
+      const item = pluckItem(obj, source);
+      if (item) { results.set(item.sku, item); return true; }
+      return false;
+    });
+  } catch { /* ignore */ }
+  return Array.from(results.values());
+}
+
+// ─── Generic fallback (JSON-LD → data-sku → OG meta) ─────────────────────────
+
+function scrapeGeneric(html: string, source: string): ScrapedItem[] {
+  const ldItems = extractJsonLd(html, source);
+  if (ldItems.length > 0) return ldItems;
+
+  const results = new Map<string, ScrapedItem>();
+  const re = /data-sku=["']([^"']+)["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const sku = m[1].trim();
+    if (results.has(sku)) continue;
+    const chunk = html.slice(Math.max(0, m.index - 300), m.index + 1500);
+    const titleM = /(?:data-name|data-title|data-product-name|alt|title)=["']([^"']{5,200})["']/i.exec(chunk);
+    const priceM = /\$\s*([0-9,]+(?:\.[0-9]{1,2})?)/i.exec(chunk);
+    const imgM = /src=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp)(?:\?[^"']*)?)/i.exec(chunk);
+    const brandM = /data-brand=["']([^"']+)["']/i.exec(chunk);
+    results.set(sku, {
+      sku,
+      title: titleM?.[1]?.trim() ?? sku,
+      price: priceM ? Number(priceM[1].replace(/,/g, "")) : 0,
+      image: imgM?.[1] ?? null,
+      brand: brandM?.[1]?.trim() ?? null,
+      source,
+    });
+  }
+  if (results.size > 0) return Array.from(results.values());
+
+  return extractOgMeta(html, source);
+}
+
+// ─── Entry point ──────────────────────────────────────────────────────────────
+
 export const scrapeUrl = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => scrapeInput.parse(d))
-  .handler(async ({ data }) => {
-    const res = await fetch(data.url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; CoolingPartsBot/1.0; +https://coolingparts.local)",
-        Accept: "text/html,application/xhtml+xml",
-      },
-    });
-    if (!res.ok) {
-      return { items: [] as Scraped[], error: `Fetch failed: ${res.status}` };
+  .handler(async ({ data }): Promise<ScrapeResult> => {
+    let hostname: string;
+    try {
+      hostname = new URL(data.url).hostname.replace(/^www\./, "");
+    } catch {
+      return { items: [], error: "Invalid URL", pagesVisited: 0, strategy: "none" };
     }
-    const html = await res.text();
-    const items = extractScraped(html);
-    return { items, error: items.length === 0 ? "No products found on page" : null };
+
+    let items: ScrapedItem[] = [];
+    let pagesVisited = 0;
+    let strategy = "generic";
+
+    try {
+      if (hostname.includes("partstown.com")) {
+        strategy = "partstown";
+        const r = await scrapePartsTown(data.url);
+        items = r.items;
+        pagesVisited = r.pagesVisited;
+      } else {
+        const html = await fetchHtml(data.url);
+        pagesVisited = 1;
+
+        if (hostname.includes("supplyhouse.com") || /<script[^>]*id=["']__NEXT_DATA__/.test(html)) {
+          strategy = hostname.includes("supplyhouse.com") ? "supplyhouse" : "next.js";
+          items = scrapeNextData(html, data.url);
+        } else if (hostname.includes("grainger.com")) {
+          strategy = "grainger";
+          items = scrapeGrainger(html, data.url);
+        } else if (hostname.includes("johnsoncontrols.com") || /window\.__INITIAL_STATE__/.test(html)) {
+          strategy = hostname.includes("johnsoncontrols.com") ? "johnsoncontrols" : "initial-state";
+          items = scrapeInitialState(html, data.url);
+        } else {
+          items = scrapeGeneric(html, data.url);
+        }
+
+        if (items.length === 0) items = scrapeGeneric(html, data.url);
+      }
+    } catch (e) {
+      return {
+        items: [],
+        error: (e as Error).message,
+        pagesVisited,
+        strategy,
+      };
+    }
+
+    return {
+      items,
+      error: items.length === 0 ? "No products found on page" : null,
+      pagesVisited,
+      strategy,
+    };
   });
